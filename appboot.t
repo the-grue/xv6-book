@@ -6,7 +6,6 @@
 	I wonder if the Mac has an A20 line.
 ..
 .PP
-.index "boot loader
 When an x86 PC boots, it starts executing a program called the BIOS (Basic Input/Output System),
 which is stored in non-volatile memory on the motherboard.
 The BIOS's job is to prepare the hardware and
@@ -567,7 +566,8 @@ that look like
 you can see examples in
 .file kernel.asm .
 This address is configured in
-.file kernel.ld .
+.file kernel.ld
+.line kernel.ld:/0x80100000/ .
 .address 0x80100000
 is a relatively high address, towards the end of the
 32-bit address space;

@@ -121,7 +121,7 @@ As shown in
 a process's user memory starts at virtual address
 zero and can grow up to
 .address KERNBASE ,
-allowing a process to address up to 2 GB of memory.
+allowing a process to address up to 2 gigabytes of memory.
 The file
 .file "memlayout.h"
 .sheet memlayout.h
@@ -160,11 +160,21 @@ to write a given page of physical memory, for example
 when creating page table pages; having every physical
 page appear at a predictable virtual address makes this convenient.
 A defect of this arrangement is that xv6 cannot make use of
-more than 2 GB of physical memory.
+more than 2 gigabytes of physical memory, because the kernel
+part of the address space is 2 gigabytes.
+Thus, xv6 requires that
+.address PHYSTOP
+be smaller than 2 gigabytes, even if the computer
+has more than 2 gigabytes of physical memory.
+.PP
 Some devices that use memory-mapped I/O appear at physical
 addresses starting at
 .address 0xFE000000 ,
 so xv6 page tables including a direct mapping for them.
+Thus,
+.address PHYSTOP
+must be smaller than two gigabytes - 16 megabytes (for the device memory).
+.PP
 Xv6 does not set the
 .code-index PTE_U
 flag in the PTEs above
@@ -338,7 +348,7 @@ ought to determine how much physical
 memory is available, but this
 turns out to be difficult on the x86.
 Instead it assumes that the machine has
-240 megabytes
+224 megabytes
 .code PHYSTOP ) (
 of physical memory, and uses all the memory between the end of the kernel
 and
@@ -618,7 +628,7 @@ the
 function that
 .code exec
 uses to copy arguments to the stack will notice that
-the destination page in not accessible, and will
+the destination page is not accessible, and will
 return \-1.
 .PP
 During the preparation of the new memory image,
@@ -840,7 +850,7 @@ Like most operating systems, xv6 uses the paging hardware
 for memory protection and mapping. Most operating systems use x86's 64-bit paging
 hardware (which has 3 levels of translation). 64-bit address spaces allow for a
 less restrictive memory layout than xv6's; for example, it would be easy to
-remove xv6's limit of 2 Gbyte for physical memory.
+remove xv6's limit of 2 gigabytes for physical memory.
 Most operating systems make far more sophisticated
 use of paging than xv6; for example, xv6 lacks demand
 paging from disk, copy-on-write fork, shared memory,
@@ -859,14 +869,25 @@ to the per-CPU data area, but the x86 has so few general
 registers that the extra effort required to use segmentation
 is worthwhile.
 .PP
+Xv6 maps the kernel in the address space of each user process but sets it up so
+that the kernel part of the address space is inaccessible when the processor is
+in user mode.  This setup is convenient because after a process switches from
+user space to kernel space, the kernel can easily access user memory by reading
+memory locations directly.  It is probably better for security, however, to have
+a separate page table for the kernel and switch to that page table when entering
+the kernel from user mode, so that the kernel and user processes are more
+separated from each other.  This design, for example, would help mitigating
+side-channels that are exposed by the Meltdown vulnerability and that allow a
+user process to read arbitrary kernel memory.
+.PP
 On machines with lots of memory
 it might make sense to use
-the x86's 4 Mbyte ``super pages.''
+the x86's 4-megabytes ``super pages.''
 Small pages make sense
 when physical memory is small, to allow allocation and page-out to disk
 with fine granularity.
 For example, if a program
-uses only 8 Kbyte of memory, giving it a 4 Mbyte physical page is wasteful.
+uses only 8 kilobytes of memory, giving it a 4 megabytes physical page is wasteful.
 Larger pages make sense on machines with lots of RAM,
 and may reduce overhead for page-table manipulation.
 Xv6 uses super pages in one place:
@@ -886,7 +907,7 @@ bit
 .register cr4 .
 .PP
 Xv6 should determine the actual RAM configuration, instead
-of assuming 240 MB.
+of assuming 224 MB.
 On the x86, there are at least three common algorithms:
 the first is to probe the physical address space looking for
 regions that behave like memory, preserving the values
@@ -932,7 +953,11 @@ for the new memory contain?
 4. Modify xv6 so that the pages for the kernel are shared among processes, which
 reduces memory consumption.
 .PP
-5. Unix implementations of
+5. Modify xv6 so that when a user program dereferences a null pointer, it will
+receive a fault.  That is, modify xv6 so that virtual address 0 isn't mapped for
+user programs.
+.PP
+6. Unix implementations of
 .code exec
 traditionally include special handling for shell scripts.
 If the file to execute begins with the text
@@ -958,11 +983,15 @@ with command line
 .code arg1 .
 Implement support for this convention in xv6.
 .PP
-6. Delete the check
+7. Delete the check
 .code "if(ph.vaddr + ph.memsz < ph.vaddr)"
 in
 .code exec.c ,
 and construct a user  program that exploits that the check is missing.
 .PP
-7. How would you improve xv6's memory layout if xv6 where running on a 64-bit
+8. Change xv6 so that user processes run with only a minimal part of the kernel
+mapped and so that the kernel runs with its own page table that doesn't include
+the user process.
+.PP
+9. How would you improve xv6's memory layout if xv6 where running on a 64-bit
 processor?

@@ -360,8 +360,13 @@ The log resides at a known fixed location, specified in the superblock.
 It consists of a header block followed by a sequence
 of updated block copies (``logged blocks'').
 The header block contains an array of sector
-numbers, one for each of the logged blocks. The header block
-also contains the count of logged blocks. Xv6 writes the header
+numbers, one for each of the logged blocks, and 
+the count of log blocks.
+The count in the header block on disk is either
+zero, indicating that there is no transaction in the log,
+or non-zero, indicating that the log contains a complete committed
+transaction with the indicated number of logged blocks.
+Xv6 writes the header
 block when a transaction commits, but not before, and sets the
 count to zero after copying the logged blocks to the file system.
 Thus a crash midway through a transaction will result in a
@@ -435,11 +440,17 @@ A typical use of the log in a system call looks like this:
 .line log.c:/^begin.op/
 waits until
 the logging system is not currently committing, and until
-there is enough free log space to hold
-the writes from this call and all currently executing system calls.
+there is enough unreserved log space to hold
+the writes from this call.
 .code log.outstanding
-counts that number of calls;
-the increment both reserves space and prevents a commit
+counts the number of system calls that have reserved log
+space; the total reserved space is 
+.code log.outstanding
+times
+.code MAXOPBLOCKS .
+Incrementing
+.code log.outstanding
+both reserves space and prevents a commit
 from occuring during this system call.
 The code conservatively assumes that each system call might write up to
 .code MAXOPBLOCKS
@@ -812,7 +823,7 @@ calls
 to truncate the file to zero bytes, freeing the data blocks;
 sets the inode type to 0 (unallocated);
 and writes the inode to disk
-.line 'fs.c:/inode.has.no.links/' .
+.line 'fs.c:/inode.has.no.links.and/' .
 .PP
 The locking protocol in 
 .code-index iput
@@ -850,13 +861,42 @@ the inode, at which point
 is done with it.
 .PP
 .code iput()
-can write to the disk.
-This means that any system call that uses the file system
-may write the disk, even calls like
+can write to the disk.  This means that any system call that uses the file
+system may write the disk, because the system call may be the last one having a
+reference to the file. Even calls like
 .code read()
-that appear to be read-only.
+that appear to be read-only, may end up calling
+.code iput().
 This, in turn, means that even read-only system calls
 must be wrapped in transactions if they use the file system.
+.PP
+.code
+There is a challenging interaction between
+.code iput()
+and crashes.
+.code
+iput() doesn't truncate a file immediately when the link count for the file
+drops to zero, because some process might still hold a reference to the inode in
+memory: a process might still be reading and writing to the file, because it
+successfully opened it. But, if a crash happens before the last process closes
+the file descriptor for the file, then the file will be marked allocated on disk
+but no directory entry points to it.
+.PP
+File systems handle this case in one of two ways. The simple solution is that on
+recovery, after reboot, the file system scans the whole file system for files
+that are marked allocated, but have no directory entry pointing to them.  If any
+such file exists, then it can free those files.
+.PP
+The second solution doesn't require scanning the file system.  In this solution,
+the file system records on disk (e.g., in the super block) the inode inumber of
+a file whose link count drops to zero but whose reference count isn't zero.  If
+the file system removes the file when its reference counts reaches 0, then it
+updates the on-disk list by removing that inode from the list. On recovery, the
+file system frees any file in the list.
+.PP
+Xv6 implements neither solution, which means that inodes may be marked allocated
+on disk, even though they are not in use anymore.  This means that over time xv6
+runs the risk that it may run out of disk space.
 .\"
 .\"
 .\"
@@ -1017,7 +1057,7 @@ live in the file system; we will return to this case in the file descriptor laye
 .PP
 The function
 .code-index stati
-.line fs.c:/^stati/
+.line "'fs.c:/^stati!(/'"
 copies inode metadata into the 
 .code stat
 structure, which is exposed to user programs
@@ -1355,7 +1395,7 @@ and then advance it
 Pipes have no concept of offset.
 Recall that the inode functions require the caller
 to handle locking
-.lines "'file.c:/stati/-1,/iunlock/' 'file.c:/readi/-1,/iunlock/' 'file.c:/writei/-1,/iunlock/'" .
+.lines "'file.c:/stati/-1,/iunlock/' 'file.c:/readi/-1,/iunlock/' 'file.c:/writei!(f/-1,/iunlock/'" .
 The inode locking has the convenient side effect that the
 read and write offsets are updated atomically, so that
 multiple writing to the same file simultaneously
@@ -1737,3 +1777,5 @@ so that
 and
 .code >>
 operators work in the shell.
+.PP
+10. Modify the file system to support symbolic links.

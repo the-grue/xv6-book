@@ -75,12 +75,12 @@ A challenge in the transition to and from the interrupt handler is
 that the processor should switch from user mode to kernel mode, and
 back.
 .PP
-A word on terminology: Although the official x86 term is interrupt,
-xv6 refers to all of these as 
-.italic-index traps , 
+A word on terminology: Although the official x86 term is exception,
+xv6 uses the term
+.italic-index trap , 
 largely because it was the term
 used by the PDP11/40 and therefore is the conventional Unix term.
-This chapter uses the terms trap and interrupt interchangeably, but it
+Furthermore, this chapter uses the terms trap and interrupt interchangeably, but it
 is important to remember that traps are caused by the current process
 running on a processor (e.g., the process makes a system call and as a
 result generates a trap), and interrupts are caused by devices and may
@@ -756,7 +756,7 @@ interrupts follow
 the same code path as system calls and exceptions, building up a trap frame.
 .PP
 .code Trap
-when it's called for a time interrupt, does just two things:
+for a timer interrupt does just two things:
 increment the ticks variable 
 .line trap.c:/ticks!+!+/ , 
 and call
@@ -973,8 +973,16 @@ according to the flags.
 If the operation is a write,
 .code idestart
 must supply the data now
-.line ide.c:/outsl/
-and the interrupt will signal that the data has been written to disk.
+.line ide.c:/outsl/ .
+.code idestart
+moves the data to a buffer in the disk controller
+using the
+.code outsl
+instruction; 
+using CPU instructions to move data to/from device hardware
+is called programmed I/O.
+Eventually the disk hardware will raise an
+interrupt to signal that the data has been written to disk.
 If the operation is a read, the interrupt will signal that the
 data is ready, and the handler will read it.
 Note that
@@ -992,7 +1000,8 @@ must wait for the result.  As discussed above,
 polling does not make efficient use of the CPU.
 Instead,
 .code-index iderw
-sleeps, waiting for the interrupt handler to 
+yields the CPU for other processes by sleeping,
+waiting for the interrupt handler to 
 record in the buffer's flags that the operation is done
 .lines ide.c:/while.*VALID/,/sleep/ .
 While this process is sleeping,
@@ -1010,7 +1019,8 @@ consults the first buffer in the queue to find
 out which operation was happening.
 If the buffer was being read and the disk controller has data waiting,
 .code ideintr
-reads the data into the buffer with
+reads the data from a buffer in the disk controller
+into memory with
 .code-index insl
 .lines ide.c:/Read.data/,/insl/ .
 Now the buffer is ready:
@@ -1043,11 +1053,11 @@ accept a
 .italic-index batch 
 of disk requests at a time and even reorder
 them to make most efficient use of the disk arm.
-When disks were simpler, operating system often reordered the
+When disks were simpler, operating systems often reordered the
 request queue themselves.
 .PP 
 Many operating systems have drivers for solid-state disks because they provide
-much faster access to data.  But, although a solid-state works very differently
+much faster access to data.  But, although a solid-state disk works very differently
 from a traditional mechanical disk, both devices provide block-based interfaces
 and reading/writing blocks on a solid-state disk is still more expensive than
 reading/writing RAM.
@@ -1056,44 +1066,44 @@ Other hardware is surprisingly similar to disks: network device buffers
 hold packets, audio device buffers hold sound samples, graphics card
 buffers hold video data and command sequences.
 High-bandwidth devices—disks, graphics cards, and network cards—often use
-direct memory access (DMA) instead of the explicit I/O
+direct memory access (DMA) instead of programmed I/O
 .opcode insl , (
-.opcode outsl )
-in this driver.
-DMA allows the disk or other controllers direct access to physical memory.
-The driver gives the device the physical address of the buffer's data field and
+.opcode outsl ).
+DMA allows the device direct access to physical memory.
+The driver gives the device the physical address of the buffer's data and
 the device copies directly to or from main memory,
 interrupting once the copy is complete.
-Using DMA means that the CPU is not involved at all in the transfer,
-which can be more efficient and is less taxing for the CPU's memory caches.
+DMA is faster and more efficient than programmed I/O
+and is less taxing for the CPU's memory caches.
 .PP
 Some drivers dynamically switch between polling and interrupts, because using
 interrupts can be expensive, but using polling can introduce delay until the
-driver processes an event.  For example, for a network driver that receives a
-burst of packets, may switch from interrupts to polling since it knows that more
+driver processes an event.  For example, a network driver that receives a
+burst of packets may switch from interrupts to polling since it knows that more
 packets must be processed and it is less expensive to process them using polling.
 Once no more packets need to be processed, the driver may switch back to
 interrupts, so that it will be alerted immediately when a new packet arrives.
 .PP
-The IDE driver routed interrupts statically to a particular processor.  Some
-drivers have a sophisticated algorithm for routing interrupts to processor so
-that the load of processing packets is well balanced but good locality is
-achieved too.  For example, a network driver might arrange to deliver interrupts
+The IDE driver routes interrupts statically to a particular processor.  Some
+drivers configure the IO APIC
+to route interrupts to multiple processors to spread out
+the work of processing packets.
+For example, a network driver might arrange to deliver interrupts
 for packets of one network connection to the processor that is managing that
 connection, while interrupts for packets of another connection are delivered to
 another processor.  This routing can get quite sophisticated; for example, if
 some network connections are short lived while others are long lived and the
 operating system wants to keep all processors busy to achieve high throughput.
 .PP
-If user process reads a file, the data for that file is copied twice.  First, it
+If a program reads a file, the data for that file is copied twice.  First, it
 is copied from the disk to kernel memory by the driver, and then later it is
 copied from kernel space to user space by the 
 .code read
-system call.  If the user process, then sends the data on the network, then
-the data is copied again twice: once from user space to kernel space and from
-kernel space to the network device.  To support applications for which low
-latency is important (e.g., a Web serving static Web pages), operating systems
-use special code paths to avoid these many copies.  As one example,
+system call.  If the program then sends the data over the network, 
+the data is copied twice more: from user space to kernel space and from
+kernel space to the network device.  To support applications for which 
+efficiency is important (e.g., serving popular images on the Web), operating systems
+use special code paths to avoid copies.  As one example,
 in real-world operating systems, 
 buffers typically match the hardware page size, so that
 read-only copies can be mapped into a process's address space
@@ -1101,21 +1111,30 @@ using the paging hardware, without any copying.
 .\"
 .section "Exercises"
 .\"
-1. Set a breakpoint at the first instruction of syscall() to catch the very
+.PP
+1. Set a breakpoint at the first instruction of
+.code syscall
+to catch the very
 first system call (e.g., br syscall). What values are on the stack at this
 point?  Explain the output of x/37x $esp at that breakpoint with each value
 labeled as to what it is (e.g., saved %ebp for trap, trapframe.eip, scratch
 space, etc.).
-
+.PP
 2.  Add a new system call to get the current UTC time and return it to the user
-program. You may want to use the helper function, cmostime() (defined in
-lapic.c), to read the real time clock. The file date.h contains the definition
-of the struct rtcdate struct, which you will provide as an argument to
-cmostime() as a pointer.
-
+program. You may want to use the helper function,
+.code cmostime
+.line lapic.c:/cmostime/ ,
+to read the real time clock. The file date.h contains the definition
+of the
+.code "struct rtcdate"
+.line date.h:/rtcdate/ ,
+which you will provide as an argument to
+.code cmostime
+as a pointer.
+.PP
 3. Write a driver for a disk that supports the SATA standard (search for SATA on
 the Web). Unlike IDE, SATA isn't obsolete.  Use SATA's tagged command queuing to
 issue many commands to the disk so that the disk internally can reorder commands
 to obtain high performance.
-
+.PP
 4. Add simple driver for an Ethernet card.

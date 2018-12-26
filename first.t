@@ -131,13 +131,13 @@ one.
 .section "User mode, kernel mode, and system calls"
 .\"
 .PP
-Strong isolation requires a hard boundary between
-applications and the operating system.  If the application makes a mistake, we
-don't want the operating system to fail.  Instead, the operating system should
-be able to clean up the failed application and continue running other applications.
-Applications shouldn't be able to modify (or even read)
-the operating system's data structures or instructions,
-should be able to access other process's memory, etc.
+Strong isolation requires a hard boundary between applications and the operating
+system.  If the application makes a mistake, we don't want the operating system
+to fail or other applications to fail. Instead, the operating system should be
+able to clean up the failed application and continue running other applications.
+To achieve strong isolation, the operating system must arrange that applications cannot modify (or even
+read) the operating system's data structures and instructions and that
+applications cannot access other process's memory.
 .PP
 Processors provide hardware support for strong isolation.   For
 example, the x86 processor, like many other processors, has two modes in which
@@ -228,9 +228,7 @@ accessing device hardware, etc.  This organization allows the kernel to be
 relatively simple, as most of the operating system
 resides in user-level servers.
 .PP
-In the real world, one can find both monolithic kernels and microkernels.  For
-example, Linux has a monolithic kernel, although some OS
-functions run as user-level servers (e.g., the windowing system).  Xv6 is
+Xv6 is
 implemented as a monolithic kernel, following most Unix operating systems.
 Thus, in xv6, the kernel interface corresponds to the operating system
 interface, and the kernel implements the complete operating system.  Since 
@@ -243,7 +241,7 @@ microkernels.
 The unit of isolation in xv6 (as in other Unix operating systems) is a 
 .italic-index "process" .
 The process abstraction prevents one process from wrecking or spying on
-another process' memory, CPU, file descriptors, etc.  It also prevents a process
+another process's memory, CPU, file descriptors, etc.  It also prevents a process
 from wrecking the kernel itself, so that a process can't subvert the kernel's
 isolation mechanisms.
 The kernel must implement the process abstraction with care because
@@ -484,7 +482,8 @@ The indirect jump is needed because the assembler would
 otherwise generate a PC-relative direct jump, which would execute
 the low-memory version of 
 .code-index main .
-Main cannot return, since the there's no return PC on the stack.
+.code Main
+cannot return, since the there's no return PC on the stack.
 Now the kernel is running in high addresses in the function
 .code-index main 
 .line main.c:/^main/ .
@@ -992,6 +991,12 @@ The system is up.
 .section "Real world"
 .\"
 .PP
+In the real world, one can find both monolithic kernels and microkernels. Many
+Unix kernels are monolithic. For example, Linux has a monolithic kernel,
+although some OS functions run as user-level servers (e.g., the windowing
+system).  Kernels such as L4, Minix, QNX are organized as a microkernel with
+servers, and have seen wide deployment in embedded settings.
+.PP
 Most operating systems have adopted the process
 concept, and most processes look similar to xv6's.
 A real operating system would find free
@@ -1002,10 +1007,6 @@ in constant time instead of the linear-time search in
 xv6 uses the linear scan
 (the first of many) for simplicity.
 .PP
-xv6's address space layout has the defect that it cannot make use
-of more than 2 GB of physical RAM.  It's possible to fix this,
-though the best plan would be to switch to a machine with 64-bit
-addresses.
 .\"
 .section "Exercises"
 .\"

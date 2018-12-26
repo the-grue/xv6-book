@@ -8,7 +8,7 @@ pike et al, sleep and wakeup
 .chapter CH:SCHED "Scheduling"
 .PP
 Any operating system is likely to run with more processes than the
-computer has processors, and so a plan is needed to time-share the
+computer has processors, so a plan is needed to time-share the
 processors among the processes. Ideally the sharing would be transparent to user
 processes.  A common approach is to provide each process
 with the illusion that it has its own virtual processor by
@@ -36,20 +36,19 @@ each process has its own CPU, just as xv6 uses the memory allocator and hardware
 page tables to create the illusion that each process has its own memory.
 .PP
 Implementing multiplexing poses a few challenges. First, how to switch from one
-process to another? Xv6 uses the standard mechanism of context switching;
-although the idea is simple, the implementation is some of the most opaque code
-in the system. Second, how to do context switching transparently?  Xv6 uses the
-standard technique of using the timer interrupt handler to drive context
-switches.  Third, many CPUs may be switching among processes concurrently, and a
-locking plan is necessary to avoid races. Fourth, when a process has exited its
-memory and other resources must be freed, but it cannot do all of this itself
+process to another? 
+Although the idea of context switching
+is simple, the implementation is some of the most opaque code
+in xv6. Second, how to switch transparently to user processes?  Xv6 uses the
+standard technique of driving context switches with timer interrupts.
+Third, many CPUs may be switching among processes concurrently, and a
+locking plan is necessary to avoid races. Fourth, a process's
+memory and other resources must be freed when the process exits,
+but it cannot do all of this itself
 because (for example) it can't free its own kernel stack while still using it.
-Finally, on a multiprocessor, each processor may run a process and
-when a processor switches from one process to another, the core must know which
-process it is running so that it can save the state of the currently-running
-process in the correct
-.code proc
-structure.
+Finally, each core of a multi-core machine must remember which
+process it is executing so that system calls affect the correct
+process's kernel state.
 Xv6 tries to solve these problems as
 simply as possible, but nevertheless the resulting code is
 tricky.
@@ -77,23 +76,17 @@ outlines the steps involved in switching from one
 user process to another:
 a user-kernel transition (system
 call or interrupt) to the old process's kernel thread,
-a context switch to the local CPU's scheduler thread, a context
+a context switch to the current CPU's scheduler thread, a context
 switch to a new process's kernel thread, and a trap return
 to the user-level process.
-Xv6 uses two context switches because the scheduler
-runs on its own stack in order to
-simplify cleaning up user processes, as we will see
-when discussing the code for
-.code exit
-and
-.code kill .
+The xv6 scheduler has its own thread (saved registers and stack) because
+it is sometimes not safe for it execute on
+any process's kernel stack;
+we'll see an example in
+.code exit .
 In this section we'll examine the mechanics of switching
 between a kernel thread and a scheduler thread.
 .PP
-Every xv6 process has its own kernel stack and register set, as we saw in
-Chapter \*[CH:MEM].
-Each CPU has a separate scheduler thread for use when it is executing
-the scheduler rather than any process's kernel thread.
 Switching from one thread to another involves saving the old thread's
 CPU registers, and restoring the previously-saved registers of the
 new thread; the fact that
@@ -103,7 +96,10 @@ and
 are saved and restored means that the CPU will switch stacks and
 switch what code it is executing.
 .PP
+The function
 .code-index swtch
+performs the saves and restores for a thread switch.
+.code swtch
 doesn't directly know about threads; it just saves and
 restores register sets, called 
 .italic-index "contexts" .
@@ -123,7 +119,7 @@ and
 .code struct
 .code context
 .code *new .
-It pushes the current CPU register onto the stack
+It pushes the current registers onto the stack
 and saves the stack pointer in
 .code *old .
 Then
@@ -134,7 +130,7 @@ to
 .register esp,
 pops previously saved registers, and returns.
 .PP
-Let's follow the initial user process through
+Let's follow a user process through
 .code swtch 
 into the scheduler.
 We saw in Chapter \*[CH:TRAP]
@@ -245,9 +241,7 @@ it returns not to
 but to 
 .code-index scheduler ,
 and its stack pointer points at the current CPU's
-scheduler stack, not
-.code initproc 's
-kernel stack.
+scheduler stack.
 .\"
 .section "Code: Scheduling"
 .\"
@@ -256,8 +250,8 @@ The last section looked at the low-level details of
 .code-index swtch ;
 now let's take 
 .code swtch
-as a given and examine the conventions involved
-in switching from process to scheduler and back to process.
+as a given and examine 
+switching from a process through the scheduler to another process.
 A process
 that wants to give up the CPU must
 acquire the process table lock
@@ -371,7 +365,7 @@ otherwise, the new process could start at
 .code Scheduler
 .line proc.c:/^scheduler/ 
 runs a simple loop:
-find a process to run, run it until it stops, repeat.
+find a process to run, run it until it yields, repeat.
 .code-index scheduler
 holds
 .code-index ptable.lock
@@ -496,79 +490,63 @@ for performance.
 .section "Code: mycpu and myproc"
 .\"
 .PP
-In many places in xv6, a processor must identify which process it is running.
-For example, when a processor serves a
-.code yield
-system call,
-the processor must determine which process is invoking
-.code yield .
-Xv6 follows the standard plan that relies on a tiny bit of hardware support.
-Xv6 maintains an array of
+xv6 maintains a
 .code-index "struct cpu"
-.line proc.h:/struct.cpu/ .
-The array has one entry for each processor and each entry contains per-processor
-state, such as the current-running process, as well as a hardware identifier for
-that processor
-.code apicid ). (
-When a processor must find it's per-cpu state, it reads its
-identifier from its local APIC and uses that identifier to find its state in the
-array.
-.PP
-The kernel uses the function
+for each processor, which records
+the process currently running
+on the processor (if any),
+the processor's unique hardware identifier
+.code apicid ), (
+and some other information.
+The function
 .code-index mycpu
 .line proc.c:/^mycpu/
-to find its
-.code apicid ,
-which in turn calls the
-function
-.code-index lapicid .
-.code
-The function
-.code lapicid
-returns the hardware identifier for this processor and
-.code mycpu
-uses that identifier to finds its
+returns the current processor's
 .code "struct cpu" .
-These functions are invoked by a kernel thread and there is risk that the kernel
-thread may be scheduled to a different processor after reading the
-.code apicid
-but before
 .code mycpu
-returns.  If that happens the function returns the wrong
-.code apicid .
+does this by reading the processor
+identifier from the local APIC hardware and looking through
+the array of
+.code "struct cpu"
+for an entry with that identifier.
+The return value of
+.code mycpu
+is fragile: if the timer were to interrupt and cause
+the thread to be moved to a different processor, the
+return value would no longer be correct.
 To avoid this problem, xv6 requires that callers of
 .code mycpu
-invoke it with interrupts disabled.
+disable interrupts, and only enable
+them after they finish using the returned
+.code "struct cpu" .
 .PP
-The kernel uses the function
+The function
 .code-index myproc
 .line proc.c:/^myproc/
-to find the
+returns the
 .code "struct proc"
+pointer
 for the process that is running on the current processor.
-The function
 .code myproc
-disables interrupts, and invokes
-.code mycpu
-to find its processor's state, which contains a field
-.code proc .
-When a processor switches to a new process in
+disables interrupts, invokes
+.code mycpu ,
+fetches the current process pointer
+.code "c->proc" ) (
+out of the
+.code "struct cpu" ,
+and then enables interrupts.
+If there is no process running, because the the caller is
+executing in
 .code scheduler ,
-it sets
-.code proc
-to that process's
-.code "struct proc" .
-.PP
-The function
-.code mycpu
-scans the CPU array
-to find the
-.code "struct cpu"
-with the matching
-.code apicid .
-This scan is inefficient and kernels in the real-word
-often dedicate a CPU register to cache a pointer
-to the current processor's state.
+.code myproc
+returns zero.
+The return value of
+.code myproc
+is safe to use even if interrupts are enabled:
+if a timer interrupt moves the calling process to a
+different processor, its
+.code "struct proc"
+pointer will stay the same.
 .\"
 .section "Sleep and wakeup"
 .\"
@@ -1357,8 +1335,7 @@ has not marked the current process as a
 yet, but it is safe:
 although
 .code wakeup
-may mark the parent as
-.code RUNNABLE ,
+may cause the parent to run,
 the loop in
 .code wait
 cannot run until
@@ -1376,7 +1353,7 @@ the exiting process until after
 has set its state to
 .code ZOMBIE
 .line proc.c:/state.=.ZOMBIE/ .
-Before exit reschedules,
+Before exit yields the processor,
 it reparents all of
 the exiting process's children,
 passing them to the
@@ -1515,19 +1492,19 @@ in turn.  This policy is called
 .italic-index "round robin" .
 Real operating systems implement more sophisticated policies that, for example,
 allow processes to have priorities.  The idea is that a runnable high-priority process
-will be preferred by the scheduler over a runnable low-priority thread.   These
+will be preferred by the scheduler over a runnable low-priority process.   These
 policies can become complex quickly because there are often competing goals: for
 example, the operating might also want to guarantee fairness and
-high-throughput.  In addition, complex policies may lead to unintended
+high throughput.  In addition, complex policies may lead to unintended
 interactions such as
 .italic-index "priority inversion"
 and 
 .italic-index "convoys" .
 Priority inversion can happen when a low-priority and high-priority process
-share a lock, which when acquired by the low-priority process can cause the
-high-priority process to not run.  A long convoy can form when many
+share a lock, which when acquired by the low-priority process can prevent the
+high-priority process from making progress.  A long convoy can form when many
 high-priority processes are waiting for a low-priority process that acquires a
-shared lock; once a convoy has formed they can persist for long period of time.
+shared lock; once a convoy has formed it can persist for long time.
 To avoid these kinds of problems additional mechanisms are necessary in
 sophisticated schedulers.
 .PP
@@ -1630,11 +1607,11 @@ and thundering herd problems.
 Terminating processes and cleaning them up introduces much complexity in xv6.
 In most operating systems it is even more complex, because, for example, the
 victim process may be deep inside the kernel sleeping, and unwinding its
-stack requires much careful programming.  Many operating system unwind the stack
+stack requires much careful programming.  Many operating systems unwind the stack
 using explicit mechanisms for exception handling, such as
 .code longjmp .
 Furthermore, there are other events that can cause a sleeping process to be
-woken up, even though the events it is waiting for has not happened yet.  For
+woken up, even though the event it is waiting for has not happened yet.  For
 example, when a Unix process is sleeping, another process may send a 
 .code-index signal
 to it.  In this case, the
@@ -1676,7 +1653,7 @@ doesn't type any input).
 .code "lk != &ptable.lock"
 to avoid a deadlock
 .lines proc.c:/sleeplock0/,/^..}/ .
-It could eliminate the special case by 
+Suppose the special case were eliminated by
 replacing
 .P1
 if(lk != &ptable.lock){
@@ -1746,7 +1723,14 @@ Answer: maybe keep the current design but create a fast path for when there is
 a runnable user process available.
 ..
 .PP
-7. The lock
+7. Modify xv6 to turn off a processor when it is idle and just spinning in the
+loop in
+.code scheduler .
+(Hint: look at the x86
+.code HLT
+instruction.)
+.PP
+8. The lock
 .code p->lock
 protects many invariants, and when looking at a particular piece of xv6 code that
 is protected by
